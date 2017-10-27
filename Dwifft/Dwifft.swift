@@ -83,21 +83,32 @@ public enum Dwifft {
     /// - Parameters:
     ///   - lhs: an array
     ///   - rhs: another, uh, array
+    ///   - equals: method used for comparison of lhs and rhs
     /// - Returns: the series of transformations that, when applied to `lhs`, will yield `rhs`.
-    public static func diff<Value: Equatable>(_ lhs: [Value], _ rhs: [Value]) -> [DiffStep<Value>] {
+    public static func diff<Value: Equatable>(_ lhs: [Value], _ rhs: [Value], _ equals: (Value, Value) -> Bool) -> [DiffStep<Value>] {
         if lhs.isEmpty {
             return rhs.enumerated().map(DiffStep.insert)
         } else if rhs.isEmpty {
             return lhs.enumerated().map(DiffStep.delete).reversed()
         }
-
-        let table = MemoizedSequenceComparison.buildTable(lhs, rhs, lhs.count, rhs.count)
+        
+        let table = MemoizedSequenceComparison.buildTable(lhs, rhs, lhs.count, rhs.count, equals)
         var result = diffInternal(table, lhs, rhs, lhs.count, rhs.count, ([], []))
         while case let .call(f) = result {
             result = f()
         }
         guard case let .done(accum) = result else { fatalError("unreachable code") }
         return accum.1 + accum.0
+    }
+
+    /// Returns the sequence of `DiffStep`s required to transform one array into another.
+    ///
+    /// - Parameters:
+    ///   - lhs: an array
+    ///   - rhs: another, uh, array
+    /// - Returns: the series of transformations that, when applied to `lhs`, will yield `rhs`.
+    public static func diff<Value: Equatable>(_ lhs: [Value], _ rhs: [Value]) -> [DiffStep<Value>] {
+        return diff(lhs, rhs, ==)
     }
 
     /// Applies a diff to an array. The following should always be true:
@@ -279,7 +290,7 @@ fileprivate enum Result<T>{
 }
 
 fileprivate struct MemoizedSequenceComparison<T: Equatable> {
-    static func buildTable(_ x: [T], _ y: [T], _ n: Int, _ m: Int) -> [[Int]] {
+    static func buildTable(_ x: [T], _ y: [T], _ n: Int, _ m: Int, _ equals: (T,T) -> Bool) -> [[Int]] {
         var table = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
         // using unsafe pointers lets us avoid swift array bounds-checking, which results in a considerable speed boost.
         table.withUnsafeMutableBufferPointer { unsafeTable in
@@ -287,7 +298,7 @@ fileprivate struct MemoizedSequenceComparison<T: Equatable> {
                 y.withUnsafeBufferPointer { unsafeY in
                     for i in 1...n {
                         for j in 1...m {
-                            if unsafeX[i&-1] == unsafeY[j&-1] {
+                            if equals(unsafeX[i&-1], unsafeY[j&-1]) {
                                 unsafeTable[i][j] = unsafeTable[i&-1][j&-1] + 1
                             } else {
                                 unsafeTable[i][j] = max(unsafeTable[i&-1][j], unsafeTable[i][j&-1])
